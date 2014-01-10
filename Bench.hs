@@ -21,7 +21,9 @@ main = defaultMain
   , bench "version4" $ nf version4 bs1_0
   , bench "version5" $ nf version5 bs1_0
   , bench "version6" $ nf version6 bs1_0
-  , bench "version7" $ nf version6 bs1_0
+  , bench "version7" $ nf version7 bs1_0
+  , bench "versionInl1" $ nf versionInl1 bs1_0
+  , bench "versionInl2" $ nf versionInl2 bs1_0
   ]
 
 test = do
@@ -31,7 +33,7 @@ test = do
   print $ BS.length $ fst $ version4 bs1_0
   print $ BS.length $ fst $ version5 bs1_0
   print $ BS.length $ fst $ version6 bs1_0
-  print $ BS.length $ fst $ version6 bs1_0
+  print $ BS.length $ fst $ version7 bs1_0
 
 str1 = (concat $ replicate 10000 "abcd") ++ "\n" ++ "hello"
 bs1 = BS.pack str1
@@ -77,6 +79,11 @@ chr x = Internal.w2c $ Internal.inlinePerformIO $ peek x
 inc :: Ptr Word8 -> Ptr Word8
 inc x = x `plusPtr` 1
 
+{-# INLINE byteString0 #-}
+{-# INLINE chr #-}
+{-# INLINE inc #-}
+
+
 break0_1 :: (Char -> Bool) -> ByteString0 -> (ByteString, ByteString0)
 break0_1 f (BS0 bs) = (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
     where
@@ -117,8 +124,21 @@ version5 str = break0_2 test str
 
 -- Version 6
 
+-- Exact duplicate of break0_2 - ghc 7.6.3 doesn't inline it if we use it in 2 places
+break0_2copied :: (Char -> Bool) -> ByteString0 -> (ByteString, ByteString0)
+break0_2copied f (BS0 bs) = (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
+    where
+        i = Internal.inlinePerformIO $ BS.unsafeUseAsCString bs $ \ptr -> do
+            let start = castPtr ptr :: Ptr Word8
+            let end = go start
+            return $! Ptr end `minusPtr` start
+
+        go s@(Ptr a) | c == '\0' || f c = a
+                     | otherwise = go $ inc s
+            where c = chr s
+
 version6 :: ByteString0 -> (ByteString, ByteString0)
-version6 str = break0_2 test str
+version6 str = break0_2copied test str
   where
     test x = x <= '$' && (x == ' ' || x == '\r' || x == '\n' || x == '$')
 
@@ -141,3 +161,30 @@ version7 :: ByteString0 -> (ByteString, ByteString0)
 version7 str = break00_1 test str
   where
     test x = x <= '$' && (x == ' ' || x == '\r' || x == '\n' || x == '$' || x == '\0')
+
+
+-- Inlining issue
+
+-- Version 6
+
+break0_2pleaseinline :: (Char -> Bool) -> ByteString0 -> (ByteString, ByteString0)
+break0_2pleaseinline f (BS0 bs) = (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
+    where
+        i = Internal.inlinePerformIO $ BS.unsafeUseAsCString bs $ \ptr -> do
+            let start = castPtr ptr :: Ptr Word8
+            let end = go start
+            return $! Ptr end `minusPtr` start
+
+        go s@(Ptr a) | c == '\0' || f c = a
+                     | otherwise = go $ inc s
+            where c = chr s
+
+versionInl1 :: ByteString0 -> (ByteString, ByteString0)
+versionInl1 str = break0_2pleaseinline test str
+  where
+    test x = x <= '$' && (x == ' ' || x == '\r' || x == '\n' || x == '$')
+
+versionInl2 :: ByteString0 -> (ByteString, ByteString0)
+versionInl2 str = break0_2pleaseinline test str
+  where
+    test x = x <= '$' && (x == ' ' || x == '\r' || x == '\n' || x == '$')
