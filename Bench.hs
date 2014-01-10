@@ -1,4 +1,6 @@
-module Main (main) where
+{-# LANGUAGE MagicHash #-}
+
+module Main (main, test) where
 
 import           Criterion.Main
 import           Control.DeepSeq
@@ -10,7 +12,9 @@ import           Data.List
 import           Data.Word
 import           Foreign
 import           GHC.Exts (Ptr(..))
+import           GHC.Prim
 
+import Debug.Trace
 
 main :: IO ()
 main = defaultMain
@@ -24,6 +28,8 @@ main = defaultMain
   , bench "version7" $ nf version7 bs1_0
   , bench "versionInl1" $ nf versionInl1 bs1_0
   , bench "versionInl2" $ nf versionInl2 bs1_0
+  , bench "version_unrolled4" $ nf version_unrolled4 bs1_0
+  , bench "version32bits" $ nf version32bits bs1_0
   ]
 
 test = do
@@ -34,6 +40,8 @@ test = do
   print $ BS.length $ fst $ version5 bs1_0
   print $ BS.length $ fst $ version6 bs1_0
   print $ BS.length $ fst $ version7 bs1_0
+  print $ BS.length $ fst $ version_unrolled4 bs1_0
+  print $ BS.length $ fst $ version32bits bs1_0
 
 str1 = (concat $ replicate 10000 "abcd") ++ "\n" ++ "hello"
 bs1 = BS.pack str1
@@ -188,3 +196,56 @@ versionInl2 :: ByteString0 -> (ByteString, ByteString0)
 versionInl2 str = break0_2pleaseinline test str
   where
     test x = x <= '$' && (x == ' ' || x == '\r' || x == '\n' || x == '$')
+
+
+-- Version 32 bits
+
+break00_unrolled4 :: (Char -> Bool) -> ByteString0 -> (ByteString, ByteString0)
+break00_unrolled4 f (BS0 bs) = (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
+    where
+        i = Internal.inlinePerformIO $ BS.unsafeUseAsCString bs $ \ptr -> do
+            let start = castPtr ptr :: Ptr Word8
+            let end = go start
+            return $! Ptr end `minusPtr` start
+
+        go s@(Ptr a) | f c0 = a
+                     | f c1 = a `plusAddr#` 1#
+                     | f c2 = a `plusAddr#` 2#
+                     | f c3 = a `plusAddr#` 3#
+                     | otherwise = go $ s `plusPtr` 4
+            where
+              c0 = Internal.w2c $ Internal.inlinePerformIO $ peek s
+              c1 = Internal.w2c $ Internal.inlinePerformIO $ peek (s `plusPtr` 1)
+              c2 = Internal.w2c $ Internal.inlinePerformIO $ peek (s `plusPtr` 2)
+              c3 = Internal.w2c $ Internal.inlinePerformIO $ peek (s `plusPtr` 3)
+
+version_unrolled4 :: ByteString0 -> (ByteString, ByteString0)
+version_unrolled4 str = break00_unrolled4 test str
+  where
+    test x = x <= '$' && (x == ' ' || x == '\r' || x == '\n' || x == '$' || x == '\0')
+
+
+break00_32bits :: (Char -> Bool) -> ByteString0 -> (ByteString, ByteString0)
+break00_32bits f (BS0 bs) = (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
+    where
+        i = Internal.inlinePerformIO $ BS.unsafeUseAsCString bs $ \ptr -> do
+            let start = castPtr ptr :: Ptr Word32
+            let end = go start
+            return $! Ptr end `minusPtr` start
+
+        go s@(Ptr a) | f c0 = a
+                     | f c1 = a `plusAddr#` 1#
+                     | f c2 = a `plusAddr#` 2#
+                     | f c3 = a `plusAddr#` 3#
+                     | otherwise = go $ s `plusPtr` 4
+            where
+              w32 = Internal.inlinePerformIO $ (peek s :: IO Word32)
+              c0 = Internal.w2c $ fromIntegral $ (w32 .&.       0xFF)
+              c1 = Internal.w2c $ fromIntegral $ (w32 .&.     0xFF00) `shiftR` 8
+              c2 = Internal.w2c $ fromIntegral $ (w32 .&.   0xFF0000) `shiftR` 16
+              c3 = Internal.w2c $ fromIntegral $ (w32 .&. 0xFF000000) `shiftR` 24
+
+version32bits :: ByteString0 -> (ByteString, ByteString0)
+version32bits str = break00_32bits test str
+  where
+    test x = x <= '$' && (x == ' ' || x == '\r' || x == '\n' || x == '$' || x == '\0')
