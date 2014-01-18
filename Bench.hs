@@ -42,6 +42,8 @@ main = test >> defaultMain
   , bench "versionC64" $ nf versionC64 bs1_0
   , bench "versionMemchr" $ nf versionMemchr bs1_0
   , bench "versionMemchr_simple" $ nf versionMemchr_simple bs1_0
+  , bench "versionMemchr_system" $ nf versionMemchr_system bs1_0
+  , bench "versionMemchr_eglibc" $ nf versionMemchr_eglibc bs1_0
   , bench "versionMemchr_nl1" $ nf versionMemchr_nl1 bs1_0
   , bench "versionMemchr_nl2" $ nf versionMemchr_nl2 bs1_0
   , bench "versionMemchr_nl3" $ nf versionMemchr_nl3 bs1_0
@@ -65,6 +67,8 @@ test = do
   print $ BS.length $ fst $ versionC64 bs1_0
   print $ BS.length $ fst $ versionMemchr bs1_0
   print $ BS.length $ fst $ versionMemchr_simple bs1_0
+  print $ BS.length $ fst $ versionMemchr_system bs1_0
+  print $ BS.length $ fst $ versionMemchr_eglibc bs1_0
   print $ BS.length $ fst $ versionMemchr_nl1 bs1_0
   print $ BS.length $ fst $ versionMemchr_nl2 bs1_0
   print $ BS.length $ fst $ versionMemchr_nl3 bs1_0
@@ -317,6 +321,10 @@ int :: CInt -> Int
 int = fromIntegral
 {-# INLINE int #-}
 
+cint :: Int -> CInt
+cint = fromIntegral
+{-# INLINE cint #-}
+
 
 foreign import ccall unsafe break_c_8 :: Ptr CChar -> IO CInt
 
@@ -361,6 +369,28 @@ foreign import ccall unsafe memchr_simple :: Ptr CChar -> Word8 -> IO CInt
 versionMemchr_simple :: ByteString0 -> (ByteString, ByteString0)
 versionMemchr_simple (BS0 bs) = Internal.inlinePerformIO $ BS.unsafeUseAsCString bs $ \ptr -> do
   i <- int `fmap` memchr_simple ptr (fromIntegral $ ord '\n')
+  return (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
+
+
+-- Just find newline, system installed memchr
+
+foreign import ccall unsafe memchr :: Ptr CChar -> Word8 -> CInt -> IO (Ptr CChar)
+
+versionMemchr_system :: ByteString0 -> (ByteString, ByteString0)
+versionMemchr_system (BS0 bs) = Internal.inlinePerformIO $ BS.unsafeUseAsCStringLen bs $ \(ptr, len) -> do
+  p <- memchr ptr (fromIntegral $ ord '\n') (cint len)
+  let i = p `minusPtr` ptr
+  return (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
+
+
+-- Just find newline, eglibc's memchr
+
+foreign import ccall unsafe memchr_eglibc :: Ptr CChar -> Word8 -> CInt -> IO (Ptr CChar)
+
+versionMemchr_eglibc :: ByteString0 -> (ByteString, ByteString0)
+versionMemchr_eglibc (BS0 bs) = Internal.inlinePerformIO $ BS.unsafeUseAsCStringLen bs $ \(ptr, len) -> do
+  p <- memchr_eglibc ptr (fromIntegral $ ord '\n') (cint len)
+  let i = p `minusPtr` ptr
   return (BS.unsafeTake i bs, BS0 $ BS.unsafeDrop i bs)
 
 
